@@ -1,4 +1,6 @@
-// Uncomment this block to pass the first stage
+mod message;
+
+use message::Message;
 use std::net::UdpSocket;
 
 fn main() {
@@ -12,10 +14,19 @@ fn main() {
         match udp_socket.recv_from(&mut buf) {
             Ok((size, source)) => {
                 println!("Received {} bytes from {}", size, source);
-                let response = [];
-                udp_socket
-                    .send_to(&response, source)
-                    .expect("Failed to send response");
+                match Message::deserialize(buf) {
+                    Ok(mut m) => {
+                        m.header.set_qr(true);
+                        let response = m.serialize();
+                        udp_socket
+                            .send_to(&response, source)
+                            .expect("Failed to send response");
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to parse message: {}", e);
+                        continue;
+                    }
+                };
             }
             Err(e) => {
                 eprintln!("Error receiving data: {}", e);
