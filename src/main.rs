@@ -16,7 +16,9 @@ fn main() {
                 println!("Received {} bytes from {}", size, source);
                 match Message::deserialize(buf) {
                     Ok(mut m) => {
-                        m.header.set_qr(true);
+                        m.header.qr = true;
+                        m.header.qdcount = m.questions.len() as u16;
+                        m.header.id = 1234;
                         let response = m.serialize();
                         udp_socket
                             .send_to(&response, source)
