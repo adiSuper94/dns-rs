@@ -17,7 +17,7 @@ fn main() {
                 match Message::parse(&buf) {
                     Ok((_, mut m)) => {
                         m = update_message(m);
-                        let response = m.serialize();
+                        let response = m.to_bytes();
                         udp_socket
                             .send_to(&response, source)
                             .expect("Failed to send response");
@@ -38,8 +38,12 @@ fn main() {
 
 fn update_message(mut m: Message) -> Message {
     m.header.qr = true;
+    m.header.aa = false;
+    m.header.tc = false;
+    m.header.ra = false;
+    m.header.z = 0;
+    m.header.rcode = 4;
     m.header.qdcount = m.questions.len() as u16;
-    m.header.id = 1234;
     m.header.ancount = 1;
     m.answers =vec![];
     let ans = Answer{

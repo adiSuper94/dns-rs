@@ -12,10 +12,10 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn serialize(&self) -> Vec<u8> {
-        let mut bites = self.header.serialize();
-        bites.extend(self.questions.iter().flat_map(|q| q.serialize()));
-        bites.extend(self.answers.iter().flat_map(|a| a.serialize()));
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bites = self.header.to_bytes();
+        bites.extend(self.questions.iter().flat_map(|q| q.to_bytes()));
+        bites.extend(self.answers.iter().flat_map(|a| a.to_bytes()));
         return bites;
     }
 
@@ -61,17 +61,17 @@ pub struct Header {
     /// specifies the type of query in a message
     opcode: u8,
     /// authoritative answer: 1 if the responding server is authoritative for/ owns the domain name in question
-    aa: bool,
+    pub aa: bool,
     /// truncation: 1 is message was larger than 512 bytes, and was truncated
-    tc: bool,
+    pub tc: bool,
     /// recursion desired: 1 if the client wants the server to recursively resolve the query
     rd: bool,
     /// recursion available: server sets this to 1 if it supports recursion
-    ra: bool,
+    pub ra: bool,
     /// Reserved: Used by DNSSEC queries.
-    z: u8,
+    pub z: u8,
     /// response code: indicates the status of the response. 0 if no error
-    rcode: u8,
+    pub rcode: u8,
     /// number of questions in the question section
     pub qdcount: u16,
     /// number of records in answer section
@@ -83,7 +83,7 @@ pub struct Header {
 }
 
 impl Header {
-    pub fn serialize(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Vec<u8> {
         let mut bites = vec![];
         bites.push((self.id >> 8) as u8);
         bites.push(self.id as u8);
@@ -292,7 +292,7 @@ impl Question {
         return Ok((bites, Question { tipe, class, name }));
     }
 
-    fn serialize(&self) -> Vec<u8> {
+    fn to_bytes(&self) -> Vec<u8> {
         let mut bites = vec![];
         for label in &self.name {
             bites.push(label.len() as u8);
@@ -347,7 +347,7 @@ impl Answer{
         return Ok((bites, Answer { name, tipe, class, ttl, rdlength, rdata: rdata.to_vec()}));
     }
 
-    fn serialize(&self) -> Vec<u8> {
+    fn to_bytes(&self) -> Vec<u8> {
         let mut bites = vec![];
         for label in &self.name {
             bites.push(label.len() as u8);
