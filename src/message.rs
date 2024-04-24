@@ -260,9 +260,9 @@ impl ResourceClass {
 }
 
 pub struct Question {
-    tipe: QType,
-    class: ResourceClass,
-    name: Vec<String>,
+    pub tipe: QType,
+    pub class: ResourceClass,
+    pub name: Vec<String>,
 }
 
 impl Question {

@@ -44,16 +44,21 @@ fn update_message(mut m: Message) -> Message {
     m.header.z = 0;
     m.header.rcode = 4;
     m.header.qdcount = m.questions.len() as u16;
-    m.header.ancount = 1;
-    m.answers =vec![];
-    let ans = Answer{
-        name:vec!["codecrafters".to_string(), "io".to_string()],
-        tipe: QType::A,
-        class: ResourceClass::IN,
-        ttl: 60,
-        rdlength: 4,
-        rdata: vec![127, 0, 0, 1],
-    };
-    m.answers.push(ans);
+    m.header.ancount = m.questions.len() as u16;
+    m.answers = Vec::new();
+    for q in m.questions.iter_mut() {
+        q.tipe = QType::A;
+        q.class = ResourceClass::IN;
+        let ans = Answer {
+            name: q.name.clone(),
+            tipe: QType::A,
+            class: ResourceClass::IN,
+            ttl: 60,
+            rdlength: 4,
+            rdata: vec![127, 0, 0, 1],
+        };
+        m.answers.push(ans);
+    }
+
     m
 }
