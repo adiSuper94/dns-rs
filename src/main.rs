@@ -1,6 +1,6 @@
 mod message;
 
-use message::Message;
+use message::{Answer, Message, QType, ResourceClass};
 use std::net::UdpSocket;
 
 fn main() {
@@ -14,11 +14,9 @@ fn main() {
         match udp_socket.recv_from(&mut buf) {
             Ok((size, source)) => {
                 println!("Received {} bytes from {}", size, source);
-                match Message::deserialize(buf) {
-                    Ok(mut m) => {
-                        m.header.qr = true;
-                        m.header.qdcount = m.questions.len() as u16;
-                        m.header.id = 1234;
+                match Message::parse(&buf) {
+                    Ok((_, mut m)) => {
+                        m = update_message(m);
                         let response = m.serialize();
                         udp_socket
                             .send_to(&response, source)
@@ -36,4 +34,22 @@ fn main() {
             }
         }
     }
+}
+
+fn update_message(mut m: Message) -> Message {
+    m.header.qr = true;
+    m.header.qdcount = m.questions.len() as u16;
+    m.header.id = 1234;
+    m.header.ancount = 1;
+    m.answers =vec![];
+    let ans = Answer{
+        name:vec!["codecrafters".to_string(), "io".to_string()],
+        tipe: QType::A,
+        class: ResourceClass::IN,
+        ttl: 60,
+        rdlength: 4,
+        rdata: vec![127, 0, 0, 1],
+    };
+    m.answers.push(ans);
+    m
 }

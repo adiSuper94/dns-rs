@@ -1,42 +1,57 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
+use nom::{
+    bytes::complete::take,
+    number::complete::{be_u16, be_u32, be_u8},
+    IResult,
+};
 
 pub struct Message {
     pub header: Header,
     pub questions: Vec<Question>,
+    pub answers: Vec<Answer>,
 }
 
 impl Message {
     pub fn serialize(&self) -> Vec<u8> {
         let mut bites = self.header.serialize();
         bites.extend(self.questions.iter().flat_map(|q| q.serialize()));
+        bites.extend(self.answers.iter().flat_map(|a| a.serialize()));
         return bites;
     }
 
-    pub fn deserialize(bites: [u8; 512]) -> Result<Message> {
-        let header_bites = bites[0..12].to_vec();
-        let header = Header::derserialize(header_bites)?;
-        let mut bite_iter = bites[12..].iter().peekable();
+    pub fn parse(bites: &[u8]) -> IResult<&[u8], Message> {
+        let (mut bites, header) = Header::parse(bites)?;
         let mut questions = vec![];
+        let mut question: Question;
         for _ in 0..header.qdcount {
-            let mut question_bites = vec![];
-            loop {
-                if let Some(bite) = bite_iter.next() {
-                    if *bite == 0 {
-                        question_bites.push(*bite);
-                        break;
-                    } else {
-                        question_bites.push(*bite);
-                    }
-                } else {
-                    bail!("Invalid input, couldn't read label length");
-                }
-            }
-            question_bites.extend(bite_iter.by_ref().take(4));
-            let question = Question::deserialize(question_bites)?;
+            (bites, question) = Question::parse(bites)?;
             questions.push(question);
         }
-        return Ok(Message { header, questions });
+        let mut answers = vec![];
+        let mut answer: Answer;
+        for _ in 0..header.ancount {
+            (bites, answer) = Answer::parse(bites)?;
+            answers.push(answer);
+        }
+        return Ok((bites, Message { header, questions, answers }));
     }
+
+    fn parse_label_seq(bites: &[u8]) -> IResult<&[u8], Vec<String>> {
+        let mut name = vec![];
+        let (mut bites, mut lable_len) = be_u8(bites)?;
+        let mut label_bites: &[u8];
+        loop {
+            (bites, label_bites) = take(lable_len)(bites)?;
+            let label = String::from_utf8_lossy(label_bites).to_string();
+            name.push(label);
+            (bites, lable_len) = be_u8(bites)?;
+            if lable_len == 0 {
+                break;
+            }
+        }
+        return Ok((bites, name));
+    }
+
 }
 
 pub struct Header {
@@ -60,7 +75,7 @@ pub struct Header {
     /// number of questions in the question section
     pub qdcount: u16,
     /// number of records in answer section
-    ancount: u16,
+    pub ancount: u16,
     /// number of records in authority section
     nscount: u16,
     /// number of records in additional section
@@ -91,46 +106,49 @@ impl Header {
         bites.push((self.nscount >> 8) as u8);
         bites.push(self.nscount as u8);
         bites.push((self.arcount >> 8) as u8);
+
         bites.push(self.arcount as u8);
         return bites;
     }
 
-    fn derserialize(bites: Vec<u8>) -> Result<Header> {
-        if bites.len() != 12 {
-            bail!("Header must be 12 bytes long");
-        }
-        let id = ((bites[0] as u16) << 8) | bites[1] as u16;
-        let qr = bites[2] & 0b10000000 == 128;
-        let opcode = (bites[2] & 0b01111000) >> 3;
-        let aa = bites[2] & 0b00000100 == 4;
-        let tc = bites[2] & 0b00000010 == 2;
-        let rd = bites[2] & 0b00000001 == 1;
-        let ra = bites[3] & 0b10000000 == 128;
-        let z = (bites[3] & 0b01110000) >> 4;
-        let rcode = bites[3] & 0b00001111;
-        let qdcount = ((bites[4] as u16) << 8) | bites[5] as u16;
-        let ancount = ((bites[6] as u16) << 8) | bites[7] as u16;
-        let nscount = ((bites[8] as u16) << 8) | bites[9] as u16;
-        let arcount = ((bites[10] as u16) << 8) | bites[11] as u16;
-        return Ok(Header {
-            id,
-            qr,
-            opcode,
-            aa,
-            tc,
-            rd,
-            ra,
-            z,
-            rcode,
-            qdcount,
-            ancount,
-            nscount,
-            arcount,
-        });
+    fn parse(bites: &[u8]) -> IResult<&[u8], Header> {
+        let (bites, id) = be_u16(bites)?;
+        let (bites, sec_bite) = be_u8(bites)?;
+        let qr = sec_bite & 0b10000000 == 128;
+        let opcode = (sec_bite & 0b01111000) >> 3;
+        let aa = sec_bite & 0b00000100 == 4;
+        let tc = sec_bite & 0b00000010 == 2;
+        let rd = sec_bite & 0b00000001 == 1;
+        let (bites, third_bite) = be_u8(bites)?;
+        let ra = third_bite & 0b10000000 == 128;
+        let z = (third_bite & 0b01110000) >> 4;
+        let rcode = third_bite & 0b00001111;
+        let (bites, qdcount) = be_u16(bites)?;
+        let (bites, ancount) = be_u16(bites)?;
+        let (bites, nscount) = be_u16(bites)?;
+        let (bites, arcount) = be_u16(bites)?;
+        return Ok((
+            bites,
+            Header {
+                id,
+                qr,
+                opcode,
+                aa,
+                tc,
+                rd,
+                ra,
+                z,
+                rcode,
+                qdcount,
+                ancount,
+                nscount,
+                arcount,
+            },
+        ));
     }
 }
 
-enum QType {
+pub enum QType {
     /// A host address
     A,
     /// An authoritative name server
@@ -210,7 +228,7 @@ impl QType {
     }
 }
 
-enum ResourceClass {
+pub enum ResourceClass {
     /// the Internet
     IN,
     /// the CSNET class
@@ -247,43 +265,36 @@ pub struct Question {
     name: Vec<String>,
 }
 
-impl Question{
-    fn deserialize(bites: Vec<u8>) -> Result<Question> {
-        let mut bite_iter = bites.into_iter().peekable();
-        let mut name = vec![];
-        loop{
-            if let Some(bite) = bite_iter.next(){
-                let label_len = bite.to_be();
-                let label_bites:Vec<u8>  = bite_iter.by_ref().take(label_len as usize).collect();
-                let label = String::from_utf8(label_bites)?;
-                name.push(label);
-                if bite_iter.peek() == Some(&0){
-                    bite_iter.next();
-                    break;
-                }
-            }else{
-                bail!("Invalid input, couldn't read label length");
-            }
+impl Question {
 
-        }
-        let tipe_bite1 = bite_iter.next().context("Invalid input, couldn't read type value")?;
-        let tipe_bite2 = bite_iter.next().context("Invalid input, couldn't read type value")?;
-        let tipe_val = u16::from_be_bytes([tipe_bite1, tipe_bite2]);
-        let tipe = QType::from_value(tipe_val)?;
-        let class_bite1 = bite_iter.next().context("Invalid input, couldn't read class value")?;
-        let class_bite2 = bite_iter.next().context("Invalid input, couldn't read class value")?;
-        let class_val = u16::from_be_bytes([class_bite1, class_bite2]);
-        let class = ResourceClass::from_value(class_val)?;
-        Ok(Question{
-            tipe,
-            class,
-            name,
-        })
+    fn parse(bites: &[u8]) -> IResult<&[u8], Question> {
+        let (bites, name) = Message::parse_label_seq(bites)?;
+        let (bites, tipe) = be_u16(bites)?;
+        let tipe = match QType::from_value(tipe) {
+            Ok(t) => t,
+            Err(_e) => {
+                return Err(nom::Err::Failure(nom::error::Error::new(
+                    bites,
+                    nom::error::ErrorKind::Tag,
+                )))
+            }
+        };
+        let (bites, class) = be_u16(bites)?;
+        let class = match ResourceClass::from_value(class) {
+            Ok(c) => c,
+            Err(_e) => {
+                return Err(nom::Err::Failure(nom::error::Error::new(
+                    bites,
+                    nom::error::ErrorKind::Tag,
+                )))
+            }
+        };
+        return Ok((bites, Question { tipe, class, name }));
     }
 
     fn serialize(&self) -> Vec<u8> {
         let mut bites = vec![];
-        for label in &self.name{
+        for label in &self.name {
             bites.push(label.len() as u8);
             bites.extend(label.as_bytes());
         }
@@ -294,6 +305,68 @@ impl Question{
         let class_val = self.class.value();
         bites.push((class_val >> 8) as u8);
         bites.push(class_val as u8);
+        return bites;
+    }
+}
+
+pub struct Answer {
+    pub name: Vec<String>,
+    pub tipe: QType,
+    pub class: ResourceClass,
+    pub ttl: u32,
+    pub rdlength: u16,
+    pub rdata: Vec<u8>,
+}
+
+impl Answer{
+    fn parse(bites: &[u8]) -> IResult<&[u8], Answer> {
+        let (bites, name) = Message::parse_label_seq(bites)?;
+        let (bites, tipe) = be_u16(bites)?;
+        let tipe = match QType::from_value(tipe) {
+            Ok(t) => t,
+            Err(_e) => {
+                return Err(nom::Err::Failure(nom::error::Error::new(
+                    bites,
+                    nom::error::ErrorKind::Tag,
+                )))
+            }
+        };
+        let (bites, class) = be_u16(bites)?;
+        let class = match ResourceClass::from_value(class) {
+            Ok(c) => c,
+            Err(_e) => {
+                return Err(nom::Err::Failure(nom::error::Error::new(
+                    bites,
+                    nom::error::ErrorKind::Tag,
+                )))
+            }
+        };
+        let (bites, ttl) = be_u32(bites)?;
+        let (bites, rdlength) = be_u16(bites)?;
+        let (bites, rdata) = take(rdlength)(bites)?;
+        return Ok((bites, Answer { name, tipe, class, ttl, rdlength, rdata: rdata.to_vec()}));
+    }
+
+    fn serialize(&self) -> Vec<u8> {
+        let mut bites = vec![];
+        for label in &self.name {
+            bites.push(label.len() as u8);
+            bites.extend(label.as_bytes());
+        }
+        bites.push(0);
+        let tipe_val = self.tipe.value();
+        bites.push((tipe_val >> 8) as u8);
+        bites.push(tipe_val as u8);
+        let class_val = self.class.value();
+        bites.push((class_val >> 8) as u8);
+        bites.push(class_val as u8);
+        bites.push((self.ttl >> 24) as u8);
+        bites.push((self.ttl >> 16) as u8);
+        bites.push((self.ttl >> 8) as u8);
+        bites.push(self.ttl as u8);
+        bites.push((self.rdlength >> 8) as u8);
+        bites.push(self.rdlength as u8);
+        bites.extend(&self.rdata);
         return bites;
     }
 }
