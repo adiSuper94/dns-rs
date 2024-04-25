@@ -4,11 +4,13 @@ use nom::{
     number::complete::{be_u16, be_u32, be_u8},
     IResult,
 };
+use std::collections::HashMap;
 
 pub struct Message {
     pub header: Header,
     pub questions: Vec<Question>,
     pub answers: Vec<Answer>,
+    label_offsets: HashMap<u32, String>,
 }
 
 impl Message {
@@ -20,38 +22,79 @@ impl Message {
     }
 
     pub fn parse(bites: &[u8]) -> IResult<&[u8], Message> {
+        let mut parse_offset: u32 = 0;
         let (mut bites, header) = Header::parse(bites)?;
-        let mut questions = vec![];
+        parse_offset += 12;
+        let mut m = Message {
+            header,
+            questions: vec![],
+            answers: vec![],
+            label_offsets: HashMap::new(),
+        };
         let mut question: Question;
-        for _ in 0..header.qdcount {
-            (bites, question) = Question::parse(bites)?;
-            questions.push(question);
+        for _ in 0..m.header.qdcount {
+            (bites, question) = Question::parse(&mut m, bites, &mut parse_offset)?;
+            m.questions.push(question);
         }
-        let mut answers = vec![];
         let mut answer: Answer;
-        for _ in 0..header.ancount {
-            (bites, answer) = Answer::parse(bites)?;
-            answers.push(answer);
+        for _ in 0..m.header.ancount {
+            (bites, answer) = Answer::parse(&mut m, bites, &mut parse_offset)?;
+            m.answers.push(answer);
         }
-        return Ok((bites, Message { header, questions, answers }));
+        return Ok((bites, m));
     }
 
-    fn parse_label_seq(bites: &[u8]) -> IResult<&[u8], Vec<String>> {
+    fn is_compressed_label(bite: u8) -> bool {
+        return bite & 0b11000000 == 0b11000000;
+    }
+
+    fn parse_label_seq<'a>(
+        &mut self,
+        bites: &'a [u8],
+        parse_offset: &mut u32,
+    ) -> IResult<&'a [u8], Vec<String>> {
         let mut name = vec![];
+        let mut name_map: HashMap<u32, String> = HashMap::new();
         let (mut bites, mut lable_len) = be_u8(bites)?;
+        *parse_offset += 1;
         let mut label_bites: &[u8];
         loop {
-            (bites, label_bites) = take(lable_len)(bites)?;
-            let label = String::from_utf8_lossy(label_bites).to_string();
-            name.push(label);
-            (bites, lable_len) = be_u8(bites)?;
-            if lable_len == 0 {
-                break;
+            if Message::is_compressed_label(lable_len) {
+                let offset: u8;
+                (bites, offset) = be_u8(bites)?;
+                *parse_offset += 1;
+                let offset = ((lable_len as u16 & 0b00111111) << 8) | offset as u16;
+                if let Some(label) = self.label_offsets.get(&(offset as u32)) {
+                    name.push(label.clone());
+                    name_map.insert(*parse_offset - 1, name.join("."));
+                    break;
+                } else {
+                    return Err(nom::Err::Failure(nom::error::Error::new(
+                        bites,
+                        nom::error::ErrorKind::Tag,
+                    )));
+                }
+            } else {
+                (bites, label_bites) = take(lable_len)(bites)?;
+                let label = String::from_utf8_lossy(label_bites).to_string();
+                name.push(label.clone());
+                for (_k, v) in name_map.iter_mut() {
+                    v.push_str(&format!(".{}", label));
+                }
+                name_map.insert(*parse_offset - 1, label.clone());
+                *parse_offset += lable_len as u32;
+                (bites, lable_len) = be_u8(bites)?;
+                *parse_offset += 1;
+                if lable_len == 0 {
+                    break;
+                }
             }
+        }
+        for (k, v) in name_map.iter() {
+            self.label_offsets.insert(*k, v.clone());
         }
         return Ok((bites, name));
     }
-
 }
 
 pub struct Header {
@@ -266,10 +309,14 @@ pub struct Question {
 }
 
 impl Question {
-
-    fn parse(bites: &[u8]) -> IResult<&[u8], Question> {
-        let (bites, name) = Message::parse_label_seq(bites)?;
+    fn parse<'a>(
+        m: &mut Message,
+        bites: &'a [u8],
+        parse_offset: &mut u32,
+    ) -> IResult<&'a [u8], Question> {
+        let (bites, name) = m.parse_label_seq(bites, parse_offset)?;
         let (bites, tipe) = be_u16(bites)?;
+        *parse_offset += 2;
         let tipe = match QType::from_value(tipe) {
             Ok(t) => t,
             Err(_e) => {
@@ -280,6 +327,7 @@ impl Question {
             }
         };
         let (bites, class) = be_u16(bites)?;
+        *parse_offset += 2;
         let class = match ResourceClass::from_value(class) {
             Ok(c) => c,
             Err(_e) => {
@@ -318,10 +366,15 @@ pub struct Answer {
     pub rdata: Vec<u8>,
 }
 
-impl Answer{
-    fn parse(bites: &[u8]) -> IResult<&[u8], Answer> {
-        let (bites, name) = Message::parse_label_seq(bites)?;
+impl Answer {
+    fn parse<'a>(
+        m: &mut Message,
+        bites: &'a [u8],
+        parse_offset: &mut u32,
+    ) -> IResult<&'a [u8], Answer> {
+        let (bites, name) = m.parse_label_seq(bites, parse_offset)?;
         let (bites, tipe) = be_u16(bites)?;
+        *parse_offset += 2;
         let tipe = match QType::from_value(tipe) {
             Ok(t) => t,
             Err(_e) => {
@@ -332,6 +385,7 @@ impl Answer{
             }
         };
         let (bites, class) = be_u16(bites)?;
+        *parse_offset += 2;
         let class = match ResourceClass::from_value(class) {
             Ok(c) => c,
             Err(_e) => {
@@ -344,7 +398,18 @@ impl Answer{
         let (bites, ttl) = be_u32(bites)?;
         let (bites, rdlength) = be_u16(bites)?;
         let (bites, rdata) = take(rdlength)(bites)?;
-        return Ok((bites, Answer { name, tipe, class, ttl, rdlength, rdata: rdata.to_vec()}));
+        *parse_offset += 6 + rdlength as u32;
+        return Ok((
+            bites,
+            Answer {
+                name,
+                tipe,
+                class,
+                ttl,
+                rdlength,
+                rdata: rdata.to_vec(),
+            },
+        ));
     }
 
     fn to_bytes(&self) -> Vec<u8> {
