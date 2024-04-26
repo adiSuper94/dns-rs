@@ -6,6 +6,7 @@ use nom::{
 };
 use std::collections::HashMap;
 
+#[derive(Debug, Clone)]
 pub struct Message {
     pub header: Header,
     pub questions: Vec<Question>,
@@ -53,7 +54,7 @@ impl Message {
         bites: &'a [u8],
         parse_offset: &mut u32,
     ) -> IResult<&'a [u8], Vec<String>> {
-        let mut name = vec![];
+        let mut name : Vec<String> = vec![];
         let mut name_map: HashMap<u32, String> = HashMap::new();
         let (mut bites, mut lable_len) = be_u8(bites)?;
         *parse_offset += 1;
@@ -64,8 +65,9 @@ impl Message {
                 (bites, offset) = be_u8(bites)?;
                 *parse_offset += 1;
                 let offset = ((lable_len as u16 & 0b00111111) << 8) | offset as u16;
-                if let Some(label) = self.label_offsets.get(&(offset as u32)) {
-                    name.push(label.clone());
+                if let Some(labels) = self.label_offsets.get(&(offset as u32)) {
+                    let labels :Vec<String> = labels.split(".").map(|s| s.to_string()).collect();
+                    name.extend(labels);
                     name_map.insert(*parse_offset - 1, name.join("."));
                     break;
                 } else {
@@ -97,12 +99,13 @@ impl Message {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Header {
     pub id: u16,
     /// query or response: 0 for question, 1 for reply
     pub qr: bool,
     /// specifies the type of query in a message
-    opcode: u8,
+    pub opcode: u8,
     /// authoritative answer: 1 if the responding server is authoritative for/ owns the domain name in question
     pub aa: bool,
     /// truncation: 1 is message was larger than 512 bytes, and was truncated
@@ -191,6 +194,7 @@ impl Header {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum QType {
     /// A host address
     A,
@@ -271,6 +275,7 @@ impl QType {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum ResourceClass {
     /// the Internet
     IN,
@@ -302,6 +307,7 @@ impl ResourceClass {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Question {
     pub tipe: QType,
     pub class: ResourceClass,
@@ -357,6 +363,7 @@ impl Question {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Answer {
     pub name: Vec<String>,
     pub tipe: QType,
